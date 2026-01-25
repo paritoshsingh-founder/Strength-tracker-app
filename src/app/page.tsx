@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { Navbar } from '@/components/layout';
 import { Card } from '@/components/ui';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   AreaChart,
   Area,
@@ -109,6 +111,8 @@ const getTodaysWorkout = (): WorkoutDay | null => {
 };
 
 export default function Home() {
+  const { user, loading } = useAuth();
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabType>('todays-workout');
   const [workoutSets, setWorkoutSets] = useState<WorkoutSet[]>([]);
   const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
@@ -136,6 +140,13 @@ export default function Home() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [showCalendar, setShowCalendar] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push('/login');
+    }
+  }, [user, loading, router]);
 
   // Generate calendar days for the current month
   const getCalendarDays = (date: Date) => {
@@ -188,11 +199,13 @@ export default function Home() {
     return checkDate > today;
   };
 
-  // Fetch stats on mount
+  // Fetch stats when user is available
   useEffect(() => {
-    fetchStats();
-    fetchAvailableExercises();
-  }, []);
+    if (user) {
+      fetchStats();
+      fetchAvailableExercises();
+    }
+  }, [user]);
 
   // Fetch progress data when exercise changes or tab changes to progress
   useEffect(() => {
@@ -202,9 +215,12 @@ export default function Home() {
   }, [activeTab, selectedExercise]);
 
   const fetchAvailableExercises = async () => {
+    if (!user) return;
+
     const { data } = await supabase
       .from('workout_sets')
       .select('exercise_name')
+      .eq('user_id', user.id)
       .order('exercise_name');
 
     if (data) {
@@ -217,6 +233,8 @@ export default function Home() {
   };
 
   const fetchProgressData = async (exerciseName: string) => {
+    if (!user) return;
+
     setIsLoadingProgress(true);
 
     const { data } = await supabase
@@ -229,6 +247,7 @@ export default function Home() {
         workout_sessions!inner(started_at)
       `)
       .eq('exercise_name', exerciseName)
+      .eq('user_id', user.id)
       .order('logged_at', { ascending: true });
 
     if (data && data.length > 0) {
@@ -269,6 +288,8 @@ export default function Home() {
   };
 
   const fetchStats = async () => {
+    if (!user) return;
+
     // Get workouts this week
     const startOfWeek = new Date();
     startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
@@ -277,6 +298,7 @@ export default function Home() {
     const { count } = await supabase
       .from('workout_sessions')
       .select('*', { count: 'exact', head: true })
+      .eq('user_id', user.id)
       .gte('started_at', startOfWeek.toISOString());
 
     setWeeklyWorkouts(count || 0);
@@ -285,6 +307,7 @@ export default function Home() {
     const { data: sessions } = await supabase
       .from('workout_sessions')
       .select('started_at')
+      .eq('user_id', user.id)
       .order('started_at', { ascending: false })
       .limit(30);
 
@@ -368,13 +391,14 @@ export default function Home() {
     setActiveTab('live-workout');
 
     // Create workout session in Supabase
-    if (todaysWorkout) {
+    if (todaysWorkout && user) {
       console.log('Creating workout session...');
       const { data, error } = await supabase
         .from('workout_sessions')
         .insert({
           workout_type: todaysWorkout.name,
           started_at: new Date().toISOString(),
+          user_id: user.id,
         })
         .select()
         .single();
@@ -452,6 +476,8 @@ export default function Home() {
       : currentSetNumber - 1 || currentSetNumber;
 
     // Save to Supabase
+    if (!user) return;
+
     console.log('Logging set with session_id:', currentSessionId);
     const { data, error } = await supabase
       .from('workout_sets')
@@ -461,6 +487,7 @@ export default function Home() {
         set_number: setNumber,
         weight: logWeight,
         reps: logReps,
+        user_id: user.id,
       })
       .select()
       .single();
@@ -484,6 +511,8 @@ export default function Home() {
   };
 
   const handleOpenQuickLog = async (exerciseName: string) => {
+    if (!user) return;
+
     setQuickLogExercise(exerciseName);
     setShowQuickLogModal(true);
 
@@ -497,6 +526,7 @@ export default function Home() {
     const { data: existingSession } = await supabase
       .from('workout_sessions')
       .select('id')
+      .eq('user_id', user.id)
       .gte('started_at', startOfDay.toISOString())
       .lte('started_at', endOfDay.toISOString())
       .order('started_at', { ascending: false })
@@ -515,6 +545,7 @@ export default function Home() {
         .insert({
           workout_type: selectedWorkout.name,
           started_at: sessionDate.toISOString(),
+          user_id: user.id,
         })
         .select()
         .single();
@@ -526,7 +557,7 @@ export default function Home() {
   };
 
   const handleQuickLogSet = async () => {
-    if (!quickLogExercise || !quickLogSessionId) return;
+    if (!quickLogExercise || !quickLogSessionId || !user) return;
 
     setIsSaving(true);
 
@@ -538,6 +569,7 @@ export default function Home() {
         set_number: 1,
         weight: logWeight,
         reps: logReps,
+        user_id: user.id,
       })
       .select()
       .single();
@@ -553,6 +585,20 @@ export default function Home() {
     setQuickLogExercise(null);
     fetchAvailableExercises(); // Refresh exercise list for progress tab
   };
+
+  // Show loading state while checking auth
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  // Don't render if not authenticated (will redirect)
+  if (!user) {
+    return null;
+  }
 
   return (
     <div className="min-h-screen">
@@ -1221,7 +1267,7 @@ export default function Home() {
                           borderRadius: '12px',
                           color: '#fff',
                         }}
-                        formatter={(value: number, name: string) => {
+                        formatter={(value, name) => {
                           if (chartMetric === 'volume') {
                             return [`${value} kg`, 'Total Volume'];
                           }
