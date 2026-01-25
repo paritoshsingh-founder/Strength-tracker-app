@@ -3,8 +3,28 @@
 import { useState, useEffect } from 'react';
 import { Navbar } from '@/components/layout';
 import { Card } from '@/components/ui';
+import { supabase } from '@/lib/supabase';
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from 'recharts';
 
-type TabType = 'dashboard' | 'todays-workout' | 'workout-plan' | 'live-workout';
+type TabType = 'todays-workout' | 'workout-plan' | 'live-workout' | 'progress';
+
+interface ProgressData {
+  date: string;
+  minWeight: number;
+  maxWeight: number;
+  volume: number;
+}
+
+type ChartMetric = 'weight' | 'volume';
 
 interface WorkoutSet {
   id: string;
@@ -89,7 +109,7 @@ const getTodaysWorkout = (): WorkoutDay | null => {
 };
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+  const [activeTab, setActiveTab] = useState<TabType>('todays-workout');
   const [workoutSets, setWorkoutSets] = useState<WorkoutSet[]>([]);
   const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
   const [currentSetNumber, setCurrentSetNumber] = useState(1);
@@ -101,8 +121,193 @@ export default function Home() {
   const [showLogModal, setShowLogModal] = useState(false);
   const [logWeight, setLogWeight] = useState(20);
   const [logReps, setLogReps] = useState(10);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [weeklyWorkouts, setWeeklyWorkouts] = useState(0);
+  const [dayStreak, setDayStreak] = useState(0);
+  const [isSaving, setIsSaving] = useState(false);
+  const [progressData, setProgressData] = useState<ProgressData[]>([]);
+  const [selectedExercise, setSelectedExercise] = useState<string>('Bench Press');
+  const [availableExercises, setAvailableExercises] = useState<string[]>([]);
+  const [isLoadingProgress, setIsLoadingProgress] = useState(false);
+  const [chartMetric, setChartMetric] = useState<ChartMetric>('weight');
+  const [quickLogExercise, setQuickLogExercise] = useState<string | null>(null);
+  const [showQuickLogModal, setShowQuickLogModal] = useState(false);
+  const [quickLogSessionId, setQuickLogSessionId] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
 
+  // Generate calendar days for the current month
+  const getCalendarDays = (date: Date) => {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    const startingDay = firstDay.getDay();
+
+    const days: (Date | null)[] = [];
+
+    // Add empty slots for days before the first day of the month
+    for (let i = 0; i < startingDay; i++) {
+      days.push(null);
+    }
+
+    // Add all days of the month
+    for (let i = 1; i <= daysInMonth; i++) {
+      days.push(new Date(year, month, i));
+    }
+
+    return days;
+  };
+
+  const calendarDays = getCalendarDays(calendarMonth);
+
+  // Get workout for a specific date
+  const getWorkoutForDate = (date: Date): WorkoutDay | null => {
+    const day = date.getDay();
+    if (day === 1 || day === 4) return WORKOUT_PLAN[0]; // Push
+    if (day === 2 || day === 5) return WORKOUT_PLAN[1]; // Pull
+    if (day === 3 || day === 6) return WORKOUT_PLAN[2]; // Legs
+    return null; // Sunday - Rest
+  };
+
+  const selectedWorkout = getWorkoutForDate(selectedDate);
   const todaysWorkout = getTodaysWorkout();
+
+  const isToday = (date: Date) => {
+    const today = new Date();
+    return date.toDateString() === today.toDateString();
+  };
+
+  const isFutureDate = (date: Date) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const checkDate = new Date(date);
+    checkDate.setHours(0, 0, 0, 0);
+    return checkDate > today;
+  };
+
+  // Fetch stats on mount
+  useEffect(() => {
+    fetchStats();
+    fetchAvailableExercises();
+  }, []);
+
+  // Fetch progress data when exercise changes or tab changes to progress
+  useEffect(() => {
+    if (activeTab === 'progress' && selectedExercise) {
+      fetchProgressData(selectedExercise);
+    }
+  }, [activeTab, selectedExercise]);
+
+  const fetchAvailableExercises = async () => {
+    const { data } = await supabase
+      .from('workout_sets')
+      .select('exercise_name')
+      .order('exercise_name');
+
+    if (data) {
+      const uniqueExercises = [...new Set(data.map((d) => d.exercise_name))];
+      setAvailableExercises(uniqueExercises);
+      if (uniqueExercises.length > 0 && !uniqueExercises.includes(selectedExercise)) {
+        setSelectedExercise(uniqueExercises[0]);
+      }
+    }
+  };
+
+  const fetchProgressData = async (exerciseName: string) => {
+    setIsLoadingProgress(true);
+
+    const { data } = await supabase
+      .from('workout_sets')
+      .select(`
+        weight,
+        reps,
+        logged_at,
+        session_id,
+        workout_sessions!inner(started_at)
+      `)
+      .eq('exercise_name', exerciseName)
+      .order('logged_at', { ascending: true });
+
+    if (data && data.length > 0) {
+      // Group by session/date and calculate min/max weight and total volume
+      const groupedByDate: Record<string, { weights: number[]; volume: number; timestamp: number }> = {};
+
+      data.forEach((set: any) => {
+        const sessionDate = new Date(set.workout_sessions.started_at);
+        const dateKey = sessionDate.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+        });
+        if (!groupedByDate[dateKey]) {
+          groupedByDate[dateKey] = { weights: [], volume: 0, timestamp: sessionDate.getTime() };
+        }
+        const weight = Number(set.weight);
+        const reps = Number(set.reps);
+        groupedByDate[dateKey].weights.push(weight);
+        groupedByDate[dateKey].volume += weight * reps; // Volume = weight × reps
+      });
+
+      // Sort by timestamp (oldest first, newest last - left to right)
+      const chartData: ProgressData[] = Object.entries(groupedByDate)
+        .sort((a, b) => a[1].timestamp - b[1].timestamp)
+        .map(([date, { weights, volume }]) => ({
+          date,
+          minWeight: Math.min(...weights),
+          maxWeight: Math.max(...weights),
+          volume,
+        }));
+
+      setProgressData(chartData);
+    } else {
+      setProgressData([]);
+    }
+
+    setIsLoadingProgress(false);
+  };
+
+  const fetchStats = async () => {
+    // Get workouts this week
+    const startOfWeek = new Date();
+    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const { count } = await supabase
+      .from('workout_sessions')
+      .select('*', { count: 'exact', head: true })
+      .gte('started_at', startOfWeek.toISOString());
+
+    setWeeklyWorkouts(count || 0);
+
+    // Calculate day streak
+    const { data: sessions } = await supabase
+      .from('workout_sessions')
+      .select('started_at')
+      .order('started_at', { ascending: false })
+      .limit(30);
+
+    if (sessions && sessions.length > 0) {
+      let streak = 0;
+      let currentDate = new Date();
+      currentDate.setHours(0, 0, 0, 0);
+
+      for (const session of sessions) {
+        const sessionDate = new Date(session.started_at);
+        sessionDate.setHours(0, 0, 0, 0);
+
+        const diffDays = Math.floor((currentDate.getTime() - sessionDate.getTime()) / (1000 * 60 * 60 * 24));
+
+        if (diffDays === streak || diffDays === streak + 1) {
+          streak = diffDays + 1;
+        } else {
+          break;
+        }
+      }
+      setDayStreak(streak);
+    }
+  };
 
   // Workout timer effect
   useEffect(() => {
@@ -152,14 +357,36 @@ export default function Home() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleStartWorkout = () => {
+  const handleStartWorkout = async () => {
     setCurrentExerciseIndex(0);
     setCurrentSetNumber(1);
     setWorkoutTimer(0);
     setIsWorkoutRunning(true);
     setIsResting(false);
     setRestTimer(60);
+    setWorkoutSets([]);
     setActiveTab('live-workout');
+
+    // Create workout session in Supabase
+    if (todaysWorkout) {
+      console.log('Creating workout session...');
+      const { data, error } = await supabase
+        .from('workout_sessions')
+        .insert({
+          workout_type: todaysWorkout.name,
+          started_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      console.log('Session result:', { data, error });
+
+      if (data && !error) {
+        setCurrentSessionId(data.id);
+      } else if (error) {
+        console.error('Error creating session:', error);
+      }
+    }
   };
 
   const handleNextSet = () => {
@@ -211,8 +438,10 @@ export default function Home() {
     setWorkoutSets((prev) => prev.filter((set) => set.id !== id));
   };
 
-  const handleLogSet = () => {
+  const handleLogSet = async () => {
     if (!todaysWorkout) return;
+
+    setIsSaving(true);
 
     const exerciseName = isExerciseTransition
       ? todaysWorkout.exercises[currentExerciseIndex]?.name
@@ -222,15 +451,107 @@ export default function Home() {
       ? todaysWorkout.exercises[currentExerciseIndex]?.sets
       : currentSetNumber - 1 || currentSetNumber;
 
-    const newSet: WorkoutSet = {
-      id: Date.now().toString(),
-      exercise: exerciseName,
-      reps: logReps,
-      weight: logWeight,
-    };
+    // Save to Supabase
+    console.log('Logging set with session_id:', currentSessionId);
+    const { data, error } = await supabase
+      .from('workout_sets')
+      .insert({
+        session_id: currentSessionId,
+        exercise_name: exerciseName,
+        set_number: setNumber,
+        weight: logWeight,
+        reps: logReps,
+      })
+      .select()
+      .single();
 
-    setWorkoutSets((prev) => [...prev, newSet]);
+    console.log('Log set result:', { data, error });
+
+    if (data && !error) {
+      const newSet: WorkoutSet = {
+        id: data.id,
+        exercise: exerciseName,
+        reps: logReps,
+        weight: logWeight,
+      };
+      setWorkoutSets((prev) => [...prev, newSet]);
+    } else if (error) {
+      console.error('Error logging set:', error);
+    }
+
+    setIsSaving(false);
     setShowLogModal(false);
+  };
+
+  const handleOpenQuickLog = async (exerciseName: string) => {
+    setQuickLogExercise(exerciseName);
+    setShowQuickLogModal(true);
+
+    // Check if we have a session for selected date, if not create one
+    const startOfDay = new Date(selectedDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(selectedDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Check for existing session on selected date
+    const { data: existingSession } = await supabase
+      .from('workout_sessions')
+      .select('id')
+      .gte('started_at', startOfDay.toISOString())
+      .lte('started_at', endOfDay.toISOString())
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (existingSession) {
+      setQuickLogSessionId(existingSession.id);
+    } else if (selectedWorkout) {
+      // Create new session for selected date
+      const sessionDate = new Date(selectedDate);
+      sessionDate.setHours(12, 0, 0, 0); // Set to noon of selected day
+
+      const { data: newSession } = await supabase
+        .from('workout_sessions')
+        .insert({
+          workout_type: selectedWorkout.name,
+          started_at: sessionDate.toISOString(),
+        })
+        .select()
+        .single();
+
+      if (newSession) {
+        setQuickLogSessionId(newSession.id);
+      }
+    }
+  };
+
+  const handleQuickLogSet = async () => {
+    if (!quickLogExercise || !quickLogSessionId) return;
+
+    setIsSaving(true);
+
+    const { data, error } = await supabase
+      .from('workout_sets')
+      .insert({
+        session_id: quickLogSessionId,
+        exercise_name: quickLogExercise,
+        set_number: 1,
+        weight: logWeight,
+        reps: logReps,
+      })
+      .select()
+      .single();
+
+    console.log('Quick log result:', { data, error });
+
+    if (error) {
+      console.error('Error quick logging set:', error);
+    }
+
+    setIsSaving(false);
+    setShowQuickLogModal(false);
+    setQuickLogExercise(null);
+    fetchAvailableExercises(); // Refresh exercise list for progress tab
   };
 
   return (
@@ -238,32 +559,9 @@ export default function Home() {
       <Navbar />
 
       <main className="pt-24 pb-12 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
-        {/* Header */}
-        <section className="mb-6">
-          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold mb-3">
-            Welcome back, <span className="gradient-text">Paritosh</span>
-          </h1>
-          <p className="text-gray-400 text-lg">Track your workout progress and crush your goals.</p>
-        </section>
-
         {/* Tab Navigation */}
         <section className="mb-8">
           <div className="flex gap-2 p-1 bg-white/5 rounded-2xl w-fit">
-            <button
-              onClick={() => setActiveTab('dashboard')}
-              className={`px-6 py-3 rounded-xl font-medium transition-all ${
-                activeTab === 'dashboard'
-                  ? 'bg-gradient-to-r from-primary to-secondary text-white shadow-lg'
-                  : 'text-gray-400 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <span className="flex items-center gap-2">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                </svg>
-                Dashboard
-              </span>
-            </button>
             <button
               onClick={() => setActiveTab('todays-workout')}
               className={`px-6 py-3 rounded-xl font-medium transition-all ${
@@ -276,98 +574,146 @@ export default function Home() {
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
                 </svg>
-                Today&apos;s Workout
+                Workout Plan
+              </span>
+            </button>
+            <button
+              onClick={() => setActiveTab('progress')}
+              className={`px-6 py-3 rounded-xl font-medium transition-all ${
+                activeTab === 'progress'
+                  ? 'bg-gradient-to-r from-primary to-secondary text-white shadow-lg'
+                  : 'text-gray-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                </svg>
+                Progress
               </span>
             </button>
           </div>
         </section>
 
-        {/* Dashboard Tab Content */}
-        {activeTab === 'dashboard' && (
-          <div className="animate-slide-up">
-            {/* Stats Cards */}
-            <section className="grid grid-cols-2 gap-4 mb-8">
-              <Card className="text-center">
-                <p className="text-3xl font-bold text-accent">12</p>
-                <p className="text-gray-400 text-sm">This Week</p>
-              </Card>
-              <Card className="text-center">
-                <p className="text-3xl font-bold text-green-400">5</p>
-                <p className="text-gray-400 text-sm">Day Streak</p>
-              </Card>
-            </section>
-
-            {/* Main Grid */}
-            <section className="grid lg:grid-cols-3 gap-6">
-              {/* Left Column */}
-              <div className="lg:col-span-2 space-y-6">
-                {/* Today's Workout */}
-                <Card>
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-10 h-10 bg-gradient-to-br from-primary to-secondary rounded-xl flex items-center justify-center">
-                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-gray-400 text-sm">Today&apos;s Workout</p>
-                      <h2 className="text-xl font-bold text-white">{todaysWorkout ? todaysWorkout.name : 'Rest Day'}</h2>
-                    </div>
-                  </div>
-
-                  {todaysWorkout ? (
-                    <button
-                      onClick={() => setActiveTab('todays-workout')}
-                      className="w-full py-3 bg-gradient-to-r from-primary to-secondary hover:from-primary/80 hover:to-secondary/80 rounded-xl font-semibold transition-all"
-                    >
-                      View Workout
-                    </button>
-                  ) : (
-                    <p className="text-gray-400 text-center py-4">Take it easy! Recovery is important.</p>
-                  )}
-                </Card>
-              </div>
-
-              {/* Right Column */}
-              <div className="space-y-6">
-                {/* Quick Tips */}
-                <Card>
-                  <h3 className="text-lg font-bold mb-4">Quick Tips</h3>
-                  <div className="space-y-3">
-                    <div className="flex items-start gap-3">
-                      <div className="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                      </div>
-                      <p className="text-sm text-gray-400">Rest 60-90 seconds between sets for hypertrophy</p>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <div className="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                        </svg>
-                      </div>
-                      <p className="text-sm text-gray-400">Progressive overload: add weight or reps each session</p>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <div className="w-8 h-8 bg-purple-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <svg className="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                      </div>
-                      <p className="text-sm text-gray-400">Log every set to track your progress over time</p>
-                    </div>
-                  </div>
-                </Card>
-              </div>
-            </section>
-          </div>
-        )}
-
         {/* Today's Workout Tab Content */}
         {activeTab === 'todays-workout' && (
           <div className="animate-slide-up">
+            {/* Date Selector */}
+            <div className="mb-6">
+              {/* Calendar Toggle Button */}
+              <button
+                onClick={() => {
+                  setShowCalendar(!showCalendar);
+                  setCalendarMonth(selectedDate);
+                }}
+                className="w-full flex items-center justify-between px-4 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-gradient-to-br from-primary to-secondary rounded-xl flex items-center justify-center">
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                  <div className="text-left">
+                    <p className="text-white font-semibold">
+                      {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                    </p>
+                    <p className="text-gray-400 text-sm">
+                      {isToday(selectedDate) ? 'Today' : selectedDate.toLocaleDateString('en-US', { year: 'numeric' })}
+                    </p>
+                  </div>
+                </div>
+                <svg className={`w-5 h-5 text-gray-400 transition-transform ${showCalendar ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+
+              {/* Calendar Popup */}
+              {showCalendar && (
+                <Card className="mb-4">
+                  {/* Calendar Header */}
+                  <div className="flex items-center justify-between mb-4">
+                    <button
+                      onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1))}
+                      className="p-2 hover:bg-white/10 rounded-lg transition-all"
+                    >
+                      <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      </svg>
+                    </button>
+                    <h3 className="text-lg font-bold text-white">
+                      {calendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                    </h3>
+                    <button
+                      onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1))}
+                      className="p-2 hover:bg-white/10 rounded-lg transition-all"
+                    >
+                      <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {/* Day Labels */}
+                  <div className="grid grid-cols-7 gap-1 mb-2">
+                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                      <div key={day} className="text-center text-xs text-gray-500 py-2">
+                        {day}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Calendar Days */}
+                  <div className="grid grid-cols-7 gap-1">
+                    {calendarDays.map((date, index) => (
+                      <button
+                        key={index}
+                        onClick={() => {
+                          if (date) {
+                            setSelectedDate(date);
+                            setQuickLogSessionId(null);
+                            setShowCalendar(false);
+                          }
+                        }}
+                        disabled={!date}
+                        className={`aspect-square flex items-center justify-center rounded-lg text-sm transition-all ${
+                          !date
+                            ? 'invisible'
+                            : date.toDateString() === selectedDate.toDateString()
+                            ? 'bg-gradient-to-r from-primary to-secondary text-white font-bold'
+                            : isToday(date)
+                            ? 'bg-white/10 text-white font-bold'
+                            : 'text-gray-400 hover:bg-white/10 hover:text-white'
+                        }`}
+                      >
+                        {date?.getDate()}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Quick Actions */}
+                  <div className="flex gap-2 mt-4 pt-4 border-t border-white/10">
+                    <button
+                      onClick={() => {
+                        setSelectedDate(new Date());
+                        setQuickLogSessionId(null);
+                        setShowCalendar(false);
+                      }}
+                      className="flex-1 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm text-gray-300 transition-all"
+                    >
+                      Today
+                    </button>
+                    <button
+                      onClick={() => setShowCalendar(false)}
+                      className="flex-1 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm text-gray-300 transition-all"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </Card>
+              )}
+            </div>
+
             {/* Action Buttons */}
             <div className="flex flex-col sm:flex-row gap-4 mb-6">
               <button
@@ -380,7 +726,7 @@ export default function Home() {
                   </svg>
                 </div>
                 <div className="text-left">
-                  <p className="font-semibold text-white">View Workout Plan</p>
+                  <p className="font-semibold text-white">Edit Workout Plan</p>
                   <p className="text-sm text-gray-400">See your training schedule</p>
                 </div>
               </button>
@@ -402,27 +748,27 @@ export default function Home() {
               </button>
             </div>
 
-            {/* Today's Workout Based on Day */}
-            {todaysWorkout ? (
+            {/* Workout Based on Selected Date */}
+            {selectedWorkout ? (
               <Card className="overflow-hidden">
                 {/* Day Header */}
-                <div className={`bg-gradient-to-r ${todaysWorkout.color} p-4 -m-6 mb-6`}>
+                <div className={`bg-gradient-to-r ${selectedWorkout.color} p-4 -m-6 mb-6`}>
                   <div className="flex items-center justify-between">
                     <div>
-                      <h3 className="text-2xl font-bold text-white">{todaysWorkout.name}</h3>
+                      <h3 className="text-2xl font-bold text-white">{selectedWorkout.name}</h3>
                       <p className="text-white/80">
-                        {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                        {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
                       </p>
                     </div>
                     <div className="bg-white/20 px-3 py-1 rounded-full">
-                      <span className="text-white text-sm font-medium">{todaysWorkout.exercises.length} exercises</span>
+                      <span className="text-white text-sm font-medium">{selectedWorkout.exercises.length} exercises</span>
                     </div>
                   </div>
                 </div>
 
                 {/* Exercises List */}
                 <div className="space-y-3">
-                  {todaysWorkout.exercises.map((exercise, index) => (
+                  {selectedWorkout.exercises.map((exercise, index) => (
                     <div
                       key={index}
                       className="flex items-center justify-between p-4 bg-white/5 hover:bg-white/10 rounded-xl transition-colors"
@@ -433,9 +779,19 @@ export default function Home() {
                         </span>
                         <span className="font-semibold text-white text-lg">{exercise.name}</span>
                       </div>
-                      <div className="text-right">
-                        <p className="text-primary font-bold text-lg">{exercise.sets} sets</p>
-                        <p className="text-gray-400 text-sm">{exercise.reps} reps</p>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <p className="text-primary font-bold text-lg">{exercise.sets} sets</p>
+                          <p className="text-gray-400 text-sm">{exercise.reps} reps</p>
+                        </div>
+                        {!isFutureDate(selectedDate) && (
+                          <button
+                            onClick={() => handleOpenQuickLog(exercise.name)}
+                            className="px-4 py-2 bg-gradient-to-r from-primary to-secondary hover:from-primary/80 hover:to-secondary/80 rounded-xl font-medium text-sm transition-all"
+                          >
+                            Log
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -449,7 +805,7 @@ export default function Home() {
                   </svg>
                 </div>
                 <h3 className="text-2xl font-semibold text-gray-300 mb-2">Rest Day</h3>
-                <p className="text-gray-500">Take it easy today! Recovery is part of the process.</p>
+                <p className="text-gray-500">Take it easy! Recovery is part of the process.</p>
               </Card>
             )}
           </div>
@@ -662,10 +1018,23 @@ export default function Home() {
 
             {/* End Workout Button */}
             <button
-              onClick={() => {
+              onClick={async () => {
+                // Update session with end time
+                if (currentSessionId) {
+                  await supabase
+                    .from('workout_sessions')
+                    .update({
+                      ended_at: new Date().toISOString(),
+                      total_duration: workoutTimer,
+                    })
+                    .eq('id', currentSessionId);
+                }
+
                 setIsWorkoutRunning(false);
                 setIsResting(false);
+                setCurrentSessionId(null);
                 setActiveTab('todays-workout');
+                fetchStats(); // Refresh stats
               }}
               className="w-full py-4 bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-400 rounded-xl font-semibold transition-all"
             >
@@ -759,13 +1128,296 @@ export default function Home() {
                   {/* Save Button */}
                   <button
                     onClick={handleLogSet}
-                    className="w-full py-4 bg-gradient-to-r from-primary to-secondary hover:from-primary/80 hover:to-secondary/80 rounded-xl font-semibold text-lg transition-all"
+                    disabled={isSaving}
+                    className="w-full py-4 bg-gradient-to-r from-primary to-secondary hover:from-primary/80 hover:to-secondary/80 disabled:opacity-50 rounded-xl font-semibold text-lg transition-all"
                   >
-                    Save Set
+                    {isSaving ? 'Saving...' : 'Save Set'}
                   </button>
                 </Card>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Progress Tab Content */}
+        {activeTab === 'progress' && (
+          <div className="animate-slide-up">
+            <div className="mb-6">
+              <h2 className="text-2xl font-bold text-white mb-2">Progress Tracker</h2>
+              <p className="text-gray-400">Track your strength gains over time</p>
+            </div>
+
+            {/* Exercise Selector */}
+            <Card className="mb-6">
+              <label className="block text-gray-400 text-sm mb-3">Select Exercise</label>
+              <select
+                value={selectedExercise}
+                onChange={(e) => setSelectedExercise(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-xl p-4 text-white focus:outline-none focus:border-primary/50"
+              >
+                {availableExercises.length > 0 ? (
+                  availableExercises.map((exercise) => (
+                    <option key={exercise} value={exercise} className="bg-gray-900">
+                      {exercise}
+                    </option>
+                  ))
+                ) : (
+                  <option value="" className="bg-gray-900">No exercises logged yet</option>
+                )}
+              </select>
+            </Card>
+
+            {/* Chart */}
+            <Card>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold">
+                  {chartMetric === 'weight' ? 'Weight Range Over Time' : 'Total Volume Over Time'}
+                </h3>
+                <select
+                  value={chartMetric}
+                  onChange={(e) => setChartMetric(e.target.value as ChartMetric)}
+                  className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-sm focus:outline-none focus:border-primary/50"
+                >
+                  <option value="weight" className="bg-gray-900">Weight Range</option>
+                  <option value="volume" className="bg-gray-900">Volume</option>
+                </select>
+              </div>
+              {isLoadingProgress ? (
+                <div className="h-80 flex items-center justify-center">
+                  <div className="text-gray-400">Loading...</div>
+                </div>
+              ) : progressData.length > 0 ? (
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart
+                      data={progressData}
+                      margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                    >
+                      <defs>
+                        <linearGradient id="weightGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#6366f1" stopOpacity={0.8} />
+                          <stop offset="95%" stopColor="#6366f1" stopOpacity={0.1} />
+                        </linearGradient>
+                        <linearGradient id="volumeGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.8} />
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0.1} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                      <XAxis
+                        dataKey="date"
+                        stroke="#9ca3af"
+                        tick={{ fill: '#9ca3af', fontSize: 12 }}
+                      />
+                      <YAxis
+                        stroke="#9ca3af"
+                        tick={{ fill: '#9ca3af', fontSize: 12 }}
+                        tickFormatter={(value) => chartMetric === 'weight' ? `${value}kg` : `${value}`}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: 'rgba(17, 24, 39, 0.9)',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          borderRadius: '12px',
+                          color: '#fff',
+                        }}
+                        formatter={(value: number, name: string) => {
+                          if (chartMetric === 'volume') {
+                            return [`${value} kg`, 'Total Volume'];
+                          }
+                          return [
+                            `${value} kg`,
+                            name === 'maxWeight' ? 'Max Weight' : 'Min Weight',
+                          ];
+                        }}
+                      />
+                      {chartMetric === 'weight' ? (
+                        <>
+                          <Legend
+                            formatter={(value) => (value === 'maxWeight' ? 'Max Weight' : 'Min Weight')}
+                          />
+                          <Area
+                            type="monotone"
+                            dataKey="minWeight"
+                            stackId="1"
+                            stroke="#06b6d4"
+                            fill="transparent"
+                            strokeWidth={2}
+                          />
+                          <Area
+                            type="monotone"
+                            dataKey="maxWeight"
+                            stackId="2"
+                            stroke="#6366f1"
+                            fill="url(#weightGradient)"
+                            strokeWidth={2}
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <Legend
+                            formatter={() => 'Total Volume (weight × reps)'}
+                          />
+                          <Area
+                            type="monotone"
+                            dataKey="volume"
+                            stroke="#10b981"
+                            fill="url(#volumeGradient)"
+                            strokeWidth={2}
+                          />
+                        </>
+                      )}
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="h-80 flex flex-col items-center justify-center text-center">
+                  <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-4">
+                    <svg className="w-8 h-8 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-xl font-semibold text-gray-300 mb-2">No data yet</h3>
+                  <p className="text-gray-500">
+                    Start logging your sets to see your progress here!
+                  </p>
+                </div>
+              )}
+            </Card>
+
+            {/* Stats Summary */}
+            {progressData.length > 0 && (
+              <div className="grid grid-cols-2 gap-4 mt-6">
+                {chartMetric === 'weight' ? (
+                  <>
+                    <Card className="text-center">
+                      <p className="text-gray-400 text-sm mb-1">Starting Max</p>
+                      <p className="text-2xl font-bold text-white">
+                        {progressData[0]?.maxWeight} kg
+                      </p>
+                    </Card>
+                    <Card className="text-center">
+                      <p className="text-gray-400 text-sm mb-1">Current Max</p>
+                      <p className="text-2xl font-bold gradient-text">
+                        {progressData[progressData.length - 1]?.maxWeight} kg
+                      </p>
+                    </Card>
+                  </>
+                ) : (
+                  <>
+                    <Card className="text-center">
+                      <p className="text-gray-400 text-sm mb-1">Starting Volume</p>
+                      <p className="text-2xl font-bold text-white">
+                        {progressData[0]?.volume} kg
+                      </p>
+                    </Card>
+                    <Card className="text-center">
+                      <p className="text-gray-400 text-sm mb-1">Current Volume</p>
+                      <p className="text-2xl font-bold text-green-400">
+                        {progressData[progressData.length - 1]?.volume} kg
+                      </p>
+                    </Card>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Quick Log Modal */}
+        {showQuickLogModal && (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <Card className="w-full max-w-md">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold text-white">Log Set</h3>
+                <button
+                  onClick={() => {
+                    setShowQuickLogModal(false);
+                    setQuickLogExercise(null);
+                  }}
+                  className="text-gray-400 hover:text-white transition-colors"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <p className="text-gray-400 mb-6">{quickLogExercise}</p>
+
+              {/* Weight Input */}
+              <div className="mb-6">
+                <label className="block text-gray-400 text-sm mb-3">Weight (kg)</label>
+                <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-4">
+                  <button
+                    onClick={() => setLogWeight((prev) => Math.max(0, prev - 2.5))}
+                    className="w-12 h-12 bg-primary/20 hover:bg-primary/40 rounded-xl flex items-center justify-center transition-all"
+                  >
+                    <svg className="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                    </svg>
+                  </button>
+                  <div className="text-center">
+                    <input
+                      type="number"
+                      value={logWeight}
+                      onChange={(e) => setLogWeight(Number(e.target.value))}
+                      className="w-24 bg-transparent text-center text-4xl font-bold text-white focus:outline-none"
+                    />
+                    <p className="text-gray-500 text-sm">kg</p>
+                  </div>
+                  <button
+                    onClick={() => setLogWeight((prev) => prev + 2.5)}
+                    className="w-12 h-12 bg-primary/20 hover:bg-primary/40 rounded-xl flex items-center justify-center transition-all"
+                  >
+                    <svg className="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Reps Input */}
+              <div className="mb-6">
+                <label className="block text-gray-400 text-sm mb-3">Reps</label>
+                <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-4">
+                  <button
+                    onClick={() => setLogReps((prev) => Math.max(1, prev - 1))}
+                    className="w-12 h-12 bg-secondary/20 hover:bg-secondary/40 rounded-xl flex items-center justify-center transition-all"
+                  >
+                    <svg className="w-6 h-6 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                    </svg>
+                  </button>
+                  <div className="text-center">
+                    <input
+                      type="number"
+                      value={logReps}
+                      onChange={(e) => setLogReps(Number(e.target.value))}
+                      className="w-24 bg-transparent text-center text-4xl font-bold text-white focus:outline-none"
+                    />
+                    <p className="text-gray-500 text-sm">reps</p>
+                  </div>
+                  <button
+                    onClick={() => setLogReps((prev) => prev + 1)}
+                    className="w-12 h-12 bg-secondary/20 hover:bg-secondary/40 rounded-xl flex items-center justify-center transition-all"
+                  >
+                    <svg className="w-6 h-6 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Save Button */}
+              <button
+                onClick={handleQuickLogSet}
+                disabled={isSaving}
+                className="w-full py-4 bg-gradient-to-r from-primary to-secondary hover:from-primary/80 hover:to-secondary/80 disabled:opacity-50 rounded-xl font-semibold text-lg transition-all"
+              >
+                {isSaving ? 'Saving...' : 'Save Set'}
+              </button>
+            </Card>
           </div>
         )}
       </main>

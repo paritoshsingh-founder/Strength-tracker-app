@@ -153,3 +153,13 @@ input[type="number"] {
 .animate-slide-up {
   animation: slide-up 0.5s ease-out forwards;
 }
+
+/* Hide scrollbar for date scroller */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
