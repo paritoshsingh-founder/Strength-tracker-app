@@ -451,7 +451,10 @@ export default function Home() {
       interval = setInterval(() => {
         setRestTimer((prev) => {
           if (prev <= 1) {
-            // Timer completed
+            // Timer completed - vibrate phone
+            if (typeof navigator !== 'undefined' && navigator.vibrate) {
+              navigator.vibrate([200, 100, 200]); // Vibrate pattern: 200ms on, 100ms off, 200ms on
+            }
             if (isExerciseTransition) {
               // Move to next exercise with set 1
               setCurrentExerciseIndex((i) => i + 1);
