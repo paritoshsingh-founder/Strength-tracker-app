@@ -49,7 +49,7 @@ interface WorkoutDay {
   exercises: Exercise[];
 }
 
-const WORKOUT_PLAN: WorkoutDay[] = [
+const DEFAULT_WORKOUT_PLAN: WorkoutDay[] = [
   {
     id: 'push',
     name: 'Push Day',
@@ -98,13 +98,13 @@ const getTodaysWorkout = (): WorkoutDay | null => {
   const day = new Date().getDay(); // 0 = Sunday, 1 = Monday, etc.
 
   // Push Day: Monday (1) and Thursday (4)
-  if (day === 1 || day === 4) return WORKOUT_PLAN[0];
+  if (day === 1 || day === 4) return DEFAULT_WORKOUT_PLAN[0];
 
   // Pull Day: Tuesday (2) and Friday (5)
-  if (day === 2 || day === 5) return WORKOUT_PLAN[1];
+  if (day === 2 || day === 5) return DEFAULT_WORKOUT_PLAN[1];
 
   // Legs Day: Wednesday (3) and Saturday (6)
-  if (day === 3 || day === 6) return WORKOUT_PLAN[2];
+  if (day === 3 || day === 6) return DEFAULT_WORKOUT_PLAN[2];
 
   // Sunday (0) - Rest day
   return null;
@@ -140,6 +140,107 @@ export default function Home() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [showCalendar, setShowCalendar] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
+  const [selectedEditDay, setSelectedEditDay] = useState<string | null>(null);
+  const [workoutPlan, setWorkoutPlan] = useState<WorkoutDay[]>(DEFAULT_WORKOUT_PLAN);
+  const [draftWorkoutPlan, setDraftWorkoutPlan] = useState<WorkoutDay[]>(DEFAULT_WORKOUT_PLAN);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [showAddExerciseModal, setShowAddExerciseModal] = useState(false);
+  const [newExerciseName, setNewExerciseName] = useState('');
+  const [newExerciseSets, setNewExerciseSets] = useState(3);
+  const [newExerciseReps, setNewExerciseReps] = useState('10-10-10');
+  const [showEditExerciseModal, setShowEditExerciseModal] = useState(false);
+  const [editingExerciseIndex, setEditingExerciseIndex] = useState<number | null>(null);
+  const [editingWorkoutIndex, setEditingWorkoutIndex] = useState<number | null>(null);
+  const [editExerciseSets, setEditExerciseSets] = useState(3);
+  const [editExerciseReps, setEditExerciseReps] = useState('10-10-10');
+
+  const isValidEditReps = () => {
+    const repNumbers = editExerciseReps.split('-').filter(r => r.trim() !== '');
+    return repNumbers.length === editExerciseSets && repNumbers.every(r => !isNaN(Number(r.trim())));
+  };
+
+  const getEditRepPlaceholder = () => {
+    return Array(editExerciseSets).fill('10').join('-');
+  };
+
+  const handleOpenEditExercise = (workoutIndex: number, exerciseIndex: number) => {
+    const exercise = workoutPlan[workoutIndex].exercises[exerciseIndex];
+    setEditingWorkoutIndex(workoutIndex);
+    setEditingExerciseIndex(exerciseIndex);
+    setEditExerciseSets(exercise.sets);
+    setEditExerciseReps(exercise.reps);
+    setShowEditExerciseModal(true);
+  };
+
+  const handleSaveEditExercise = () => {
+    if (editingWorkoutIndex === null || editingExerciseIndex === null) return;
+
+    setWorkoutPlan(prev => {
+      const newPlan = [...prev];
+      const exercises = [...newPlan[editingWorkoutIndex].exercises];
+      exercises[editingExerciseIndex] = {
+        ...exercises[editingExerciseIndex],
+        sets: editExerciseSets,
+        reps: editExerciseReps
+      };
+      newPlan[editingWorkoutIndex] = {
+        ...newPlan[editingWorkoutIndex],
+        exercises
+      };
+      return newPlan;
+    });
+
+    setShowEditExerciseModal(false);
+    setEditingExerciseIndex(null);
+    setEditingWorkoutIndex(null);
+  };
+
+  const isValidReps = () => {
+    const repNumbers = newExerciseReps.split('-').filter(r => r.trim() !== '');
+    return repNumbers.length === newExerciseSets && repNumbers.every(r => !isNaN(Number(r.trim())));
+  };
+
+  const getRepPlaceholder = () => {
+    return Array(newExerciseSets).fill('10').join('-');
+  };
+
+  const handleAddExercise = () => {
+    if (!newExerciseName.trim() || !selectedEditDay) return;
+
+    const workoutIndex = selectedEditDay === 'Mon' || selectedEditDay === 'Thu' ? 0 :
+      selectedEditDay === 'Tue' || selectedEditDay === 'Fri' ? 1 : 2;
+
+    setWorkoutPlan(prev => {
+      const newPlan = [...prev];
+      newPlan[workoutIndex] = {
+        ...newPlan[workoutIndex],
+        exercises: [...newPlan[workoutIndex].exercises, { name: newExerciseName.trim(), sets: newExerciseSets, reps: newExerciseReps }]
+      };
+      return newPlan;
+    });
+
+    setNewExerciseName('');
+    setNewExerciseSets(3);
+    setNewExerciseReps('10-10-10');
+    setShowAddExerciseModal(false);
+  };
+
+  const handleDeleteExercise = (workoutIndex: number, exerciseIndex: number) => {
+    setWorkoutPlan(prev => {
+      const newPlan = [...prev];
+      newPlan[workoutIndex] = {
+        ...newPlan[workoutIndex],
+        exercises: newPlan[workoutIndex].exercises.filter((_, i) => i !== exerciseIndex)
+      };
+      return newPlan;
+    });
+  };
+
+  const handleSaveWorkoutPlan = () => {
+    setWorkoutPlan(draftWorkoutPlan);
+    setHasUnsavedChanges(false);
+  };
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -177,9 +278,9 @@ export default function Home() {
   // Get workout for a specific date
   const getWorkoutForDate = (date: Date): WorkoutDay | null => {
     const day = date.getDay();
-    if (day === 1 || day === 4) return WORKOUT_PLAN[0]; // Push
-    if (day === 2 || day === 5) return WORKOUT_PLAN[1]; // Pull
-    if (day === 3 || day === 6) return WORKOUT_PLAN[2]; // Legs
+    if (day === 1 || day === 4) return workoutPlan[0]; // Push
+    if (day === 2 || day === 5) return workoutPlan[1]; // Pull
+    if (day === 3 || day === 6) return workoutPlan[2]; // Legs
     return null; // Sunday - Rest
   };
 
@@ -646,37 +747,32 @@ export default function Home() {
           <div className="animate-slide-up">
             {/* Date Selector */}
             <div className="mb-6">
-              {/* Calendar Toggle Button */}
-              <button
-                onClick={() => {
-                  setShowCalendar(!showCalendar);
-                  setCalendarMonth(selectedDate);
-                }}
-                className="w-full flex items-center justify-between px-4 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-primary to-secondary rounded-xl flex items-center justify-center">
-                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                    </svg>
-                  </div>
-                  <div className="text-left">
-                    <p className="text-white font-semibold">
-                      {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-                    </p>
-                    <p className="text-gray-400 text-sm">
-                      {isToday(selectedDate) ? 'Today' : selectedDate.toLocaleDateString('en-US', { year: 'numeric' })}
-                    </p>
-                  </div>
-                </div>
-                <svg className={`w-5 h-5 text-gray-400 transition-transform ${showCalendar ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
+              <div className="flex items-center justify-between mb-2">
+                {/* Calendar Toggle Button */}
+                <button
+                  onClick={() => {
+                    setShowCalendar(!showCalendar);
+                    setCalendarMonth(selectedDate);
+                  }}
+                  className="w-10 h-10 bg-gradient-to-br from-primary to-secondary hover:opacity-80 rounded-lg flex items-center justify-center transition-all"
+                >
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                </button>
+
+                {/* View Workout Plan Button */}
+                <button
+                  onClick={() => setActiveTab('workout-plan')}
+                  className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm text-gray-300 hover:text-white transition-all"
+                >
+                  View Workout Plan
+                </button>
+              </div>
 
               {/* Calendar Popup */}
               {showCalendar && (
-                <Card className="mb-4">
+                <Card className="mb-4 max-w-xs">
                   {/* Calendar Header */}
                   <div className="flex items-center justify-between mb-4">
                     <button
@@ -760,80 +856,55 @@ export default function Home() {
               )}
             </div>
 
-            {/* Action Buttons */}
-            <div className="flex flex-col sm:flex-row gap-4 mb-6">
-              <button
-                onClick={() => setActiveTab('workout-plan')}
-                className="flex-1 flex items-center justify-center gap-3 px-6 py-4 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-primary/50 rounded-2xl transition-all group"
-              >
-                <div className="w-10 h-10 bg-gradient-to-br from-primary to-secondary rounded-xl flex items-center justify-center">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                  </svg>
-                </div>
-                <div className="text-left">
-                  <p className="font-semibold text-white">Edit Workout Plan</p>
-                  <p className="text-sm text-gray-400">See your training schedule</p>
-                </div>
-              </button>
-
-              <button
-                onClick={handleStartWorkout}
-                className="flex-1 flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-primary to-secondary hover:from-primary/80 hover:to-secondary/80 rounded-2xl transition-all"
-              >
-                <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div className="text-left">
-                  <p className="font-semibold text-white">Start</p>
-                  <p className="text-sm text-white/70">Begin your workout</p>
-                </div>
-              </button>
-            </div>
-
             {/* Workout Based on Selected Date */}
             {selectedWorkout ? (
               <Card className="overflow-hidden">
                 {/* Day Header */}
-                <div className={`bg-gradient-to-r ${selectedWorkout.color} p-4 -m-6 mb-6`}>
+                <div className="bg-white/5 border-b border-white/10 p-4 -m-6 mb-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h3 className="text-2xl font-bold text-white">{selectedWorkout.name}</h3>
-                      <p className="text-white/80">
+                      <p className="text-white font-medium">
                         {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
                       </p>
                     </div>
-                    <div className="bg-white/20 px-3 py-1 rounded-full">
-                      <span className="text-white text-sm font-medium">{selectedWorkout.exercises.length} exercises</span>
+                    <div className="flex items-center gap-2">
+                      <div className="bg-white/20 px-3 py-1 rounded-full">
+                        <span className="text-white text-sm font-medium">{selectedWorkout.exercises.length} exercises</span>
+                      </div>
+                      {isToday(selectedDate) && (
+                        <button
+                          onClick={handleStartWorkout}
+                          className="px-3 py-1 bg-purple-600 hover:bg-purple-700 rounded-full font-medium text-sm text-white transition-all"
+                        >
+                          Start
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
 
                 {/* Exercises List */}
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {selectedWorkout.exercises.map((exercise, index) => (
                     <div
                       key={index}
-                      className="flex items-center justify-between p-4 bg-white/5 hover:bg-white/10 rounded-xl transition-colors"
+                      className="flex items-center justify-between p-2.5 bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
                     >
-                      <div className="flex items-center gap-4">
-                        <span className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-lg font-bold text-gray-300">
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-7 h-7 bg-white/10 rounded-lg flex items-center justify-center text-sm font-bold text-gray-300">
                           {index + 1}
                         </span>
-                        <span className="font-semibold text-white text-lg">{exercise.name}</span>
+                        <span className="font-semibold text-white text-sm">{exercise.name}</span>
                       </div>
-                      <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-3">
                         <div className="text-right">
-                          <p className="text-primary font-bold text-lg">{exercise.sets} sets</p>
-                          <p className="text-gray-400 text-sm">{exercise.reps} reps</p>
+                          <p className="text-primary font-bold text-sm">{exercise.sets} sets</p>
+                          <p className="text-gray-400 text-xs">{exercise.reps} reps</p>
                         </div>
                         {!isFutureDate(selectedDate) && (
                           <button
                             onClick={() => handleOpenQuickLog(exercise.name)}
-                            className="px-4 py-2 bg-gradient-to-r from-primary to-secondary hover:from-primary/80 hover:to-secondary/80 rounded-xl font-medium text-sm transition-all"
+                            className="px-3 py-1.5 bg-gradient-to-r from-primary to-secondary hover:from-primary/80 hover:to-secondary/80 rounded-lg font-medium text-xs transition-all"
                           >
                             Log
                           </button>
@@ -861,63 +932,112 @@ export default function Home() {
         {activeTab === 'workout-plan' && (
           <div className="animate-slide-up">
             {/* Back Button */}
-            <button
-              onClick={() => setActiveTab('todays-workout')}
-              className="flex items-center gap-2 text-gray-400 hover:text-white mb-6 transition-colors"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-              Back to Today&apos;s Workout
-            </button>
+            <div className="flex items-center justify-between mb-6">
+              <button
+                onClick={() => setActiveTab('todays-workout')}
+                className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+                Back
+              </button>
 
-            {/* Plan Header */}
-            <div className="mb-8">
-              <h2 className="text-2xl font-bold text-white mb-2">Push Pull Legs</h2>
-              <p className="text-gray-400">6-day split with rest on Sunday</p>
+              <button
+                onClick={() => setIsEditMode(!isEditMode)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  isEditMode
+                    ? 'bg-gray-600 hover:bg-gray-700 text-white'
+                    : 'bg-purple-600 hover:bg-purple-700 text-white'
+                }`}
+              >
+                {isEditMode ? 'Done' : 'Edit'}
+              </button>
             </div>
 
-            {/* Workout Days */}
-            <div className="space-y-6">
-              {WORKOUT_PLAN.map((workout) => (
-                <Card key={workout.id} className="overflow-hidden">
-                  {/* Day Header */}
-                  <div className={`bg-gradient-to-r ${workout.color} p-4 -m-6 mb-6`}>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-xl font-bold text-white">{workout.name}</h3>
-                        <p className="text-white/80 text-sm">{workout.day}</p>
-                      </div>
-                      <div className="bg-white/20 px-3 py-1 rounded-full">
-                        <span className="text-white text-sm font-medium">{workout.exercises.length} exercises</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Exercises List */}
-                  <div className="space-y-3">
-                    {workout.exercises.map((exercise, index) => (
-                      <div
-                        key={index}
-                        className="flex items-center justify-between p-3 bg-white/5 rounded-xl"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center text-sm font-medium text-gray-400">
-                            {index + 1}
-                          </span>
-                          <span className="font-medium text-white">{exercise.name}</span>
-                        </div>
-                        <div className="text-right">
-                          <span className="text-primary font-semibold">{exercise.sets} x {exercise.reps}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
+            {/* Days of the Week */}
+            <div className="flex gap-2 mb-6">
+              {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => (
+                <button
+                  key={day}
+                  onClick={() => setSelectedEditDay(selectedEditDay === day ? null : day)}
+                  className={`flex-1 py-3 rounded-lg text-sm font-medium transition-colors ${
+                    selectedEditDay === day
+                      ? 'bg-purple-600 text-white'
+                      : 'bg-white/5 hover:bg-white/10 text-white'
+                  }`}
+                >
+                  {day}
+                </button>
               ))}
             </div>
+
+            {/* Exercises for Selected Day */}
+            {selectedEditDay && (
+              <Card>
+                {selectedEditDay === 'Sun' ? (
+                  <p className="text-gray-400">Take it easy! Recovery is part of the process.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {isEditMode && (
+                      <button
+                        onClick={() => setShowAddExerciseModal(true)}
+                        className="flex items-center gap-2 px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm font-medium text-white transition-all mb-2"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                        Add Exercise
+                      </button>
+                    )}
+                    {(() => {
+                      const workoutIndex = selectedEditDay === 'Mon' || selectedEditDay === 'Thu' ? 0 :
+                        selectedEditDay === 'Tue' || selectedEditDay === 'Fri' ? 1 : 2;
+                      return workoutPlan[workoutIndex].exercises.map((exercise, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center justify-between p-2 bg-white/5 rounded-lg"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="w-6 h-6 bg-white/10 rounded flex items-center justify-center text-xs font-medium text-gray-400">
+                              {index + 1}
+                            </span>
+                            <span className="font-medium text-white text-sm">{exercise.name}</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-primary font-semibold text-sm">{exercise.sets} x {exercise.reps}</span>
+                            {isEditMode && (
+                              <>
+                                <button
+                                  onClick={() => handleOpenEditExercise(workoutIndex, index)}
+                                  className="p-1 text-gray-400 hover:text-purple-400 transition-colors"
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                  </svg>
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteExercise(workoutIndex, index)}
+                                  className="p-1 text-gray-400 hover:text-red-400 transition-colors"
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                  </svg>
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                )}
+              </Card>
+            )}
+
           </div>
         )}
+
 
         {/* Live Workout Tab Content */}
         {activeTab === 'live-workout' && todaysWorkout && (
@@ -1462,6 +1582,164 @@ export default function Home() {
                 className="w-full py-4 bg-gradient-to-r from-primary to-secondary hover:from-primary/80 hover:to-secondary/80 disabled:opacity-50 rounded-xl font-semibold text-lg transition-all"
               >
                 {isSaving ? 'Saving...' : 'Save Set'}
+              </button>
+            </Card>
+          </div>
+        )}
+
+        {/* Add Exercise Modal */}
+        {showAddExerciseModal && (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <Card className="w-full max-w-md">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold text-white">Add Exercise</h3>
+                <button
+                  onClick={() => {
+                    setShowAddExerciseModal(false);
+                    setNewExerciseName('');
+                  }}
+                  className="text-gray-400 hover:text-white transition-colors"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-gray-400 text-sm mb-2">Exercise Name</label>
+                <input
+                  type="text"
+                  value={newExerciseName}
+                  onChange={(e) => setNewExerciseName(e.target.value)}
+                  placeholder="e.g. Bench Press"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div className="flex gap-4 mb-6">
+                <div className="flex-1">
+                  <label className="block text-gray-400 text-sm mb-2">Sets</label>
+                  <input
+                    type="number"
+                    value={newExerciseSets || ''}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === '') {
+                        setNewExerciseSets(0);
+                      } else {
+                        const sets = Math.max(1, Number(value));
+                        setNewExerciseSets(sets);
+                        setNewExerciseReps(Array(sets).fill('10').join('-'));
+                      }
+                    }}
+                    onBlur={() => {
+                      if (newExerciseSets < 1) {
+                        setNewExerciseSets(1);
+                        setNewExerciseReps('10');
+                      }
+                    }}
+                    min="1"
+                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-white focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-gray-400 text-sm mb-2">Reps (per set)</label>
+                  <input
+                    type="text"
+                    value={newExerciseReps}
+                    onChange={(e) => setNewExerciseReps(e.target.value)}
+                    placeholder={getRepPlaceholder()}
+                    className={`w-full bg-white/5 border rounded-xl p-3 text-white placeholder-gray-500 focus:outline-none ${
+                      isValidReps() ? 'border-white/10 focus:border-purple-500' : 'border-red-500/50'
+                    }`}
+                  />
+                  <p className="text-gray-500 text-xs mt-1">
+                    {newExerciseSets} numbers separated by dashes
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={handleAddExercise}
+                disabled={!newExerciseName.trim() || !isValidReps()}
+                className="w-full py-4 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl font-semibold text-lg text-white transition-all"
+              >
+                Add
+              </button>
+            </Card>
+          </div>
+        )}
+
+        {/* Edit Exercise Modal */}
+        {showEditExerciseModal && (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <Card className="w-full max-w-md">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold text-white">Edit Exercise</h3>
+                <button
+                  onClick={() => {
+                    setShowEditExerciseModal(false);
+                    setEditingExerciseIndex(null);
+                    setEditingWorkoutIndex(null);
+                  }}
+                  className="text-gray-400 hover:text-white transition-colors"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="flex gap-4 mb-6">
+                <div className="flex-1">
+                  <label className="block text-gray-400 text-sm mb-2">Sets</label>
+                  <input
+                    type="number"
+                    value={editExerciseSets || ''}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === '') {
+                        setEditExerciseSets(0);
+                      } else {
+                        const sets = Math.max(1, Number(value));
+                        setEditExerciseSets(sets);
+                        setEditExerciseReps(Array(sets).fill('10').join('-'));
+                      }
+                    }}
+                    onBlur={() => {
+                      if (editExerciseSets < 1) {
+                        setEditExerciseSets(1);
+                        setEditExerciseReps('10');
+                      }
+                    }}
+                    min="1"
+                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-white focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-gray-400 text-sm mb-2">Reps (per set)</label>
+                  <input
+                    type="text"
+                    value={editExerciseReps}
+                    onChange={(e) => setEditExerciseReps(e.target.value)}
+                    placeholder={getEditRepPlaceholder()}
+                    className={`w-full bg-white/5 border rounded-xl p-3 text-white placeholder-gray-500 focus:outline-none ${
+                      isValidEditReps() ? 'border-white/10 focus:border-purple-500' : 'border-red-500/50'
+                    }`}
+                  />
+                  <p className="text-gray-500 text-xs mt-1">
+                    {editExerciseSets} numbers separated by dashes
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={handleSaveEditExercise}
+                disabled={!isValidEditReps()}
+                className="w-full py-4 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl font-semibold text-lg text-white transition-all"
+              >
+                Save
               </button>
             </Card>
           </div>
