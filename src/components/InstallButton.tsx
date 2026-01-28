@@ -77,12 +77,18 @@ export default function InstallButton() {
             <div className="text-gray-300 space-y-3">
               <p className="font-medium">To install this app:</p>
               <ol className="list-decimal list-inside space-y-2 text-sm">
-                <li>Tap the <strong>menu (⋮)</strong> in Chrome</li>
-                <li>Tap <strong>&quot;Add to Home screen&quot;</strong></li>
-                <li>Tap <strong>&quot;Add&quot;</strong> to confirm</li>
+                <li>Tap the <strong>menu (⋮)</strong> in Chrome top-right</li>
+                <li>Look for one of these options:
+                  <ul className="list-disc list-inside ml-4 mt-1 text-gray-400">
+                    <li>&quot;Install app&quot;</li>
+                    <li>&quot;Add to Home screen&quot;</li>
+                    <li>&quot;Add to phone&quot;</li>
+                  </ul>
+                </li>
+                <li>Tap <strong>&quot;Install&quot;</strong> or <strong>&quot;Add&quot;</strong></li>
               </ol>
               <p className="text-xs text-gray-500 mt-4">
-                If you don&apos;t see this option, try refreshing the page first.
+                Not seeing it? Try: Settings → Site settings → this site → &quot;Add to Home screen&quot;
               </p>
             </div>
           </div>
