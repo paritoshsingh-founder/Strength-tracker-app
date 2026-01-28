@@ -11,8 +11,13 @@ export default function InstallButton() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
   const [showInstructions, setShowInstructions] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
 
   useEffect(() => {
+    // Check if iOS
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    setIsIOS(ios);
+
     // Check if already installed
     if (window.matchMedia('(display-mode: standalone)').matches) {
       setIsInstalled(true);
@@ -76,20 +81,36 @@ export default function InstallButton() {
             </div>
             <div className="text-gray-300 space-y-3">
               <p className="font-medium">To install this app:</p>
-              <ol className="list-decimal list-inside space-y-2 text-sm">
-                <li>Tap the <strong>menu (⋮)</strong> in Chrome top-right</li>
-                <li>Look for one of these options:
-                  <ul className="list-disc list-inside ml-4 mt-1 text-gray-400">
-                    <li>&quot;Install app&quot;</li>
-                    <li>&quot;Add to Home screen&quot;</li>
-                    <li>&quot;Add to phone&quot;</li>
-                  </ul>
-                </li>
-                <li>Tap <strong>&quot;Install&quot;</strong> or <strong>&quot;Add&quot;</strong></li>
-              </ol>
-              <p className="text-xs text-gray-500 mt-4">
-                Not seeing it? Try: Settings → Site settings → this site → &quot;Add to Home screen&quot;
-              </p>
+              {isIOS ? (
+                <>
+                  <ol className="list-decimal list-inside space-y-2 text-sm">
+                    <li>Open this site in <strong>Safari</strong> (required for iOS)</li>
+                    <li>Tap the <strong>Share button</strong> (square with arrow ↑)</li>
+                    <li>Scroll down and tap <strong>&quot;Add to Home Screen&quot;</strong></li>
+                    <li>Tap <strong>&quot;Add&quot;</strong> in the top right</li>
+                  </ol>
+                  <p className="text-xs text-gray-500 mt-4">
+                    Note: Must use Safari. Chrome on iOS doesn&apos;t support PWA installation.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <ol className="list-decimal list-inside space-y-2 text-sm">
+                    <li>Tap the <strong>menu (⋮)</strong> in Chrome top-right</li>
+                    <li>Look for one of these options:
+                      <ul className="list-disc list-inside ml-4 mt-1 text-gray-400">
+                        <li>&quot;Install app&quot;</li>
+                        <li>&quot;Add to Home screen&quot;</li>
+                        <li>&quot;Add to phone&quot;</li>
+                      </ul>
+                    </li>
+                    <li>Tap <strong>&quot;Install&quot;</strong> or <strong>&quot;Add&quot;</strong></li>
+                  </ol>
+                  <p className="text-xs text-gray-500 mt-4">
+                    Not seeing it? Try: Settings → Site settings → this site → &quot;Add to Home screen&quot;
+                  </p>
+                </>
+              )}
             </div>
           </div>
         </div>
