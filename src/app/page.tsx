@@ -242,6 +242,23 @@ export default function Home() {
     setHasUnsavedChanges(false);
   };
 
+  // Load workout plan from localStorage on mount
+  useEffect(() => {
+    const savedPlan = localStorage.getItem('workoutPlan');
+    if (savedPlan) {
+      try {
+        setWorkoutPlan(JSON.parse(savedPlan));
+      } catch (e) {
+        console.error('Failed to load workout plan:', e);
+      }
+    }
+  }, []);
+
+  // Save workout plan to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('workoutPlan', JSON.stringify(workoutPlan));
+  }, [workoutPlan]);
+
   // Redirect to login if not authenticated
   useEffect(() => {
     if (!loading && !user) {
