@@ -141,7 +141,8 @@ export default function Home() {
   const [showCalendar, setShowCalendar] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedEditDay, setSelectedEditDay] = useState<string | null>(null);
-  const [workoutPlan, setWorkoutPlan] = useState<WorkoutDay[]>(DEFAULT_WORKOUT_PLAN);
+  const [workoutPlan, setWorkoutPlan] = useState<WorkoutDay[] | null>(null);
+  const [isWorkoutPlanLoading, setIsWorkoutPlanLoading] = useState(true);
   const [draftWorkoutPlan, setDraftWorkoutPlan] = useState<WorkoutDay[]>(DEFAULT_WORKOUT_PLAN);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -165,6 +166,7 @@ export default function Home() {
   };
 
   const handleOpenEditExercise = (workoutIndex: number, exerciseIndex: number) => {
+    if (!workoutPlan) return;
     const exercise = workoutPlan[workoutIndex].exercises[exerciseIndex];
     setEditingWorkoutIndex(workoutIndex);
     setEditingExerciseIndex(exerciseIndex);
@@ -174,9 +176,10 @@ export default function Home() {
   };
 
   const handleSaveEditExercise = () => {
-    if (editingWorkoutIndex === null || editingExerciseIndex === null) return;
+    if (editingWorkoutIndex === null || editingExerciseIndex === null || !workoutPlan) return;
 
     setWorkoutPlan(prev => {
+      if (!prev) return prev;
       const newPlan = [...prev];
       const exercises = [...newPlan[editingWorkoutIndex].exercises];
       exercises[editingExerciseIndex] = {
@@ -207,12 +210,13 @@ export default function Home() {
   };
 
   const handleAddExercise = () => {
-    if (!newExerciseName.trim() || !selectedEditDay) return;
+    if (!newExerciseName.trim() || !selectedEditDay || !workoutPlan) return;
 
     const workoutIndex = selectedEditDay === 'Mon' || selectedEditDay === 'Thu' ? 0 :
       selectedEditDay === 'Tue' || selectedEditDay === 'Fri' ? 1 : 2;
 
     setWorkoutPlan(prev => {
+      if (!prev) return prev;
       const newPlan = [...prev];
       newPlan[workoutIndex] = {
         ...newPlan[workoutIndex],
@@ -229,7 +233,9 @@ export default function Home() {
   };
 
   const handleDeleteExercise = (workoutIndex: number, exerciseIndex: number) => {
+    if (!workoutPlan) return;
     setWorkoutPlan(prev => {
+      if (!prev) return prev;
       const newPlan = [...prev];
       newPlan[workoutIndex] = {
         ...newPlan[workoutIndex],
@@ -263,10 +269,14 @@ export default function Home() {
       if (data && !error) {
         setWorkoutPlan(data.workout_plan);
         console.log('Workout plan loaded successfully');
-      } else if (error && error.code !== 'PGRST116') {
-        // PGRST116 = no rows returned (first time user)
-        console.error('Failed to load workout plan:', error);
+      } else {
+        // No saved plan or error - use default
+        setWorkoutPlan(DEFAULT_WORKOUT_PLAN);
+        if (error && error.code !== 'PGRST116') {
+          console.error('Failed to load workout plan:', error);
+        }
       }
+      setIsWorkoutPlanLoading(false);
     };
 
     loadWorkoutPlan();
@@ -332,6 +342,7 @@ export default function Home() {
 
   // Get workout for a specific date
   const getWorkoutForDate = (date: Date): WorkoutDay | null => {
+    if (!workoutPlan) return null;
     const day = date.getDay();
     if (day === 1 || day === 4) return workoutPlan[0]; // Push
     if (day === 2 || day === 5) return workoutPlan[1]; // Pull
@@ -759,6 +770,15 @@ export default function Home() {
     return null;
   }
 
+  // Show loading state while loading workout plan from database
+  if (isWorkoutPlanLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen">
       <Navbar />
@@ -1049,6 +1069,7 @@ export default function Home() {
                       </button>
                     )}
                     {(() => {
+                      if (!workoutPlan) return null;
                       const workoutIndex = selectedEditDay === 'Mon' || selectedEditDay === 'Thu' ? 0 :
                         selectedEditDay === 'Tue' || selectedEditDay === 'Fri' ? 1 : 2;
                       return workoutPlan[workoutIndex].exercises.map((exercise, index) => (
