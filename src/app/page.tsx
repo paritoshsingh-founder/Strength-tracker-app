@@ -188,6 +188,7 @@ export default function Home() {
         ...newPlan[editingWorkoutIndex],
         exercises
       };
+      saveWorkoutPlanToDb(newPlan);
       return newPlan;
     });
 
@@ -217,6 +218,7 @@ export default function Home() {
         ...newPlan[workoutIndex],
         exercises: [...newPlan[workoutIndex].exercises, { name: newExerciseName.trim(), sets: newExerciseSets, reps: newExerciseReps }]
       };
+      saveWorkoutPlanToDb(newPlan);
       return newPlan;
     });
 
@@ -233,6 +235,7 @@ export default function Home() {
         ...newPlan[workoutIndex],
         exercises: newPlan[workoutIndex].exercises.filter((_, i) => i !== exerciseIndex)
       };
+      saveWorkoutPlanToDb(newPlan);
       return newPlan;
     });
   };
@@ -242,22 +245,43 @@ export default function Home() {
     setHasUnsavedChanges(false);
   };
 
-  // Load workout plan from localStorage on mount
+  // Load workout plan from database on mount
   useEffect(() => {
-    const savedPlan = localStorage.getItem('workoutPlan');
-    if (savedPlan) {
-      try {
-        setWorkoutPlan(JSON.parse(savedPlan));
-      } catch (e) {
-        console.error('Failed to load workout plan:', e);
-      }
-    }
-  }, []);
+    const loadWorkoutPlan = async () => {
+      if (!user) return;
 
-  // Save workout plan to localStorage when it changes
-  useEffect(() => {
-    localStorage.setItem('workoutPlan', JSON.stringify(workoutPlan));
-  }, [workoutPlan]);
+      const { data, error } = await supabase
+        .from('user_workout_plans')
+        .select('workout_plan')
+        .eq('user_id', user.id)
+        .single();
+
+      if (data && !error) {
+        setWorkoutPlan(data.workout_plan);
+      }
+    };
+
+    loadWorkoutPlan();
+  }, [user]);
+
+  // Save workout plan to database when it changes
+  const saveWorkoutPlanToDb = async (plan: WorkoutDay[]) => {
+    if (!user) return;
+
+    const { error } = await supabase
+      .from('user_workout_plans')
+      .upsert({
+        user_id: user.id,
+        workout_plan: plan,
+        updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'user_id'
+      });
+
+    if (error) {
+      console.error('Failed to save workout plan:', error);
+    }
+  };
 
   // Redirect to login if not authenticated
   useEffect(() => {
