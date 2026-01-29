@@ -250,14 +250,22 @@ export default function Home() {
     const loadWorkoutPlan = async () => {
       if (!user) return;
 
+      console.log('Loading workout plan for user:', user.id);
+
       const { data, error } = await supabase
         .from('user_workout_plans')
         .select('workout_plan')
         .eq('user_id', user.id)
         .single();
 
+      console.log('Load result:', { data, error });
+
       if (data && !error) {
         setWorkoutPlan(data.workout_plan);
+        console.log('Workout plan loaded successfully');
+      } else if (error && error.code !== 'PGRST116') {
+        // PGRST116 = no rows returned (first time user)
+        console.error('Failed to load workout plan:', error);
       }
     };
 
@@ -268,7 +276,9 @@ export default function Home() {
   const saveWorkoutPlanToDb = async (plan: WorkoutDay[]) => {
     if (!user) return;
 
-    const { error } = await supabase
+    console.log('Saving workout plan for user:', user.id);
+
+    const { data, error } = await supabase
       .from('user_workout_plans')
       .upsert({
         user_id: user.id,
@@ -276,10 +286,14 @@ export default function Home() {
         updated_at: new Date().toISOString()
       }, {
         onConflict: 'user_id'
-      });
+      })
+      .select();
 
     if (error) {
       console.error('Failed to save workout plan:', error);
+      alert('Failed to save: ' + error.message);
+    } else {
+      console.log('Workout plan saved successfully:', data);
     }
   };
 
