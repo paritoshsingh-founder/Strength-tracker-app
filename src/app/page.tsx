@@ -285,7 +285,7 @@ export default function Home() {
   };
 
   const selectedWorkout = getWorkoutForDate(selectedDate);
-  const todaysWorkout = getTodaysWorkout();
+  const todaysWorkout = getWorkoutForDate(new Date());
 
   const isToday = (date: Date) => {
     const today = new Date();
