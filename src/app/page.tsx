@@ -118,9 +118,11 @@ export default function Home() {
   const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
   const [currentSetNumber, setCurrentSetNumber] = useState(1);
   const [workoutTimer, setWorkoutTimer] = useState(0);
+  const [workoutStartTime, setWorkoutStartTime] = useState<number | null>(null);
   const [isWorkoutRunning, setIsWorkoutRunning] = useState(false);
   const [isResting, setIsResting] = useState(false);
   const [restTimer, setRestTimer] = useState(60);
+  const [restEndTime, setRestEndTime] = useState<number | null>(null);
   const [isExerciseTransition, setIsExerciseTransition] = useState(false);
   const [showLogModal, setShowLogModal] = useState(false);
   const [logWeight, setLogWeight] = useState(20);
@@ -499,46 +501,49 @@ export default function Home() {
     }
   };
 
-  // Workout timer effect
+  // Workout timer effect - uses timestamp to handle background/lock correctly
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isWorkoutRunning) {
+    if (isWorkoutRunning && workoutStartTime) {
       interval = setInterval(() => {
-        setWorkoutTimer((prev) => prev + 1);
+        const elapsed = Math.floor((Date.now() - workoutStartTime) / 1000);
+        setWorkoutTimer(elapsed);
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [isWorkoutRunning]);
+  }, [isWorkoutRunning, workoutStartTime]);
 
-  // Rest timer effect
+  // Rest timer effect - uses timestamp to handle background/lock correctly
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isResting && restTimer > 0) {
+    if (isResting && restEndTime) {
       interval = setInterval(() => {
-        setRestTimer((prev) => {
-          if (prev <= 1) {
-            // Timer completed - vibrate phone
-            if (typeof navigator !== 'undefined' && navigator.vibrate) {
-              navigator.vibrate([200, 100, 200]); // Vibrate pattern: 200ms on, 100ms off, 200ms on
-            }
-            if (isExerciseTransition) {
-              // Move to next exercise with set 1
-              setCurrentExerciseIndex((i) => i + 1);
-              setCurrentSetNumber(1);
-              setIsExerciseTransition(false);
-            } else {
-              // Move to next set of same exercise
-              setCurrentSetNumber((s) => s + 1);
-            }
-            setIsResting(false);
-            return 60;
+        const remaining = Math.ceil((restEndTime - Date.now()) / 1000);
+
+        if (remaining <= 0) {
+          // Timer completed - vibrate phone
+          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            navigator.vibrate([200, 100, 200]); // Vibrate pattern: 200ms on, 100ms off, 200ms on
           }
-          return prev - 1;
-        });
-      }, 1000);
+          if (isExerciseTransition) {
+            // Move to next exercise with set 1
+            setCurrentExerciseIndex((i) => i + 1);
+            setCurrentSetNumber(1);
+            setIsExerciseTransition(false);
+          } else {
+            // Move to next set of same exercise
+            setCurrentSetNumber((s) => s + 1);
+          }
+          setIsResting(false);
+          setRestEndTime(null);
+          setRestTimer(60);
+        } else {
+          setRestTimer(remaining);
+        }
+      }, 500); // Check more frequently to catch completion even after background
     }
     return () => clearInterval(interval);
-  }, [isResting, restTimer, isExerciseTransition]);
+  }, [isResting, restEndTime, isExerciseTransition]);
 
   const formatTimer = (seconds: number) => {
     const hrs = Math.floor(seconds / 3600);
@@ -554,9 +559,11 @@ export default function Home() {
     setCurrentExerciseIndex(0);
     setCurrentSetNumber(1);
     setWorkoutTimer(0);
+    setWorkoutStartTime(Date.now());
     setIsWorkoutRunning(true);
     setIsResting(false);
     setRestTimer(60);
+    setRestEndTime(null);
     setWorkoutSets([]);
     setActiveTab('live-workout');
 
@@ -594,12 +601,14 @@ export default function Home() {
       setIsExerciseTransition(false);
       setIsResting(true);
       setRestTimer(60);
+      setRestEndTime(Date.now() + 60000); // 60 seconds from now
     } else {
       // All sets completed - start rest before moving to next exercise
       if (currentExerciseIndex < todaysWorkout.exercises.length - 1) {
         setIsExerciseTransition(true);
         setIsResting(true);
         setRestTimer(60);
+        setRestEndTime(Date.now() + 60000); // 60 seconds from now
       }
     }
   };
@@ -617,6 +626,7 @@ export default function Home() {
 
     setIsResting(false);
     setRestTimer(60);
+    setRestEndTime(null);
   };
 
   const handleNextExercise = () => {
@@ -625,6 +635,7 @@ export default function Home() {
       setCurrentSetNumber(1);
       setIsResting(false);
       setRestTimer(60);
+      setRestEndTime(null);
     }
   };
 
@@ -1276,7 +1287,9 @@ export default function Home() {
                 }
 
                 setIsWorkoutRunning(false);
+                setWorkoutStartTime(null);
                 setIsResting(false);
+                setRestEndTime(null);
                 setCurrentSessionId(null);
                 setActiveTab('todays-workout');
                 fetchStats(); // Refresh stats
